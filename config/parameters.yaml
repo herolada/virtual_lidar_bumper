@@ -1,0 +1,16 @@
+virtual_lidar_bumper:
+  ros__parameters:
+    # frame the box is defined in; the incoming pointcloud is transformed into this frame
+    robot_frame: "base_link"
+    transform_tolerance: 0.1
+
+    # box bounds, in meters, in robot_frame
+    min_x: 0.0
+    max_x: 1.0
+    min_y: -0.5
+    max_y: 0.5
+    min_z: 0.3
+    max_z: 1.0
+
+    # minimum number of points required inside the box to trigger the bumper
+    min_points: 100
