@@ -14,7 +14,11 @@
 #include "tf2_ros/transform_listener.h"
 #include "tf2_eigen/tf2_eigen.hpp"
 
+#include <algorithm>
+#include <cstdio>
+#include <deque>
 #include <memory>
+#include <numeric>
 #include <vector>
 
 using PointType = pcl::PointXYZ;
@@ -33,6 +37,10 @@ public:
         max_z_ = this->declare_parameter<double>("max_z", 0.5);
 
         min_points_ = this->declare_parameter<int>("min_points", 5);
+        window_size_ = this->declare_parameter<int>("window_size", 1);
+        if (window_size_ < 1) {
+            window_size_ = 1;
+        }
 
         buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
         tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*buffer_);
@@ -51,6 +59,8 @@ private:
     double transform_tolerance_;
     double min_x_, max_x_, min_y_, max_y_, min_z_, max_z_;
     int min_points_;
+    int window_size_;
+    std::deque<int> point_count_history_;
 
     std::unique_ptr<tf2_ros::Buffer> buffer_;
     std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
@@ -95,16 +105,24 @@ private:
         std::vector<int> indices;
         crop_box.filter(indices);
 
-        bool triggered = static_cast<int>(indices.size()) >= min_points_;
+        point_count_history_.push_back(static_cast<int>(indices.size()));
+        while (static_cast<int>(point_count_history_.size()) > window_size_) {
+            point_count_history_.pop_front();
+        }
+        double avg_points = std::accumulate(point_count_history_.begin(), point_count_history_.end(), 0.0) /
+                             static_cast<double>(point_count_history_.size());
+
+        bool triggered = avg_points >= min_points_;
 
         std_msgs::msg::Bool bumper_msg;
         bumper_msg.data = triggered;
         publisher_->publish(bumper_msg);
 
-        publishBoxMarker(msg->header.stamp, indices.size(), triggered);
+        publishBoxMarker(msg->header.stamp, indices.size(), avg_points, triggered);
     }
 
-    void publishBoxMarker(const rclcpp::Time &stamp, size_t num_points, bool triggered) {
+    void publishBoxMarker(
+        const rclcpp::Time &stamp, size_t num_points, double avg_points, bool triggered) {
         double center_x = (min_x_ + max_x_) / 2.0;
         double center_y = (min_y_ + max_y_) / 2.0;
         double center_z = (min_z_ + max_z_) / 2.0;
@@ -151,7 +169,9 @@ private:
         text_marker.color.r = 1.0;
         text_marker.color.g = 1.0;
         text_marker.color.b = 1.0;
-        text_marker.text = std::to_string(num_points) + " pts";
+        char avg_buf[16];
+        std::snprintf(avg_buf, sizeof(avg_buf), "%.1f", avg_points);
+        text_marker.text = std::to_string(num_points) + " pts (avg " + avg_buf + ")";
         text_marker.lifetime = rclcpp::Duration::from_seconds(0.5);
 
         visualization_msgs::msg::MarkerArray marker_array;

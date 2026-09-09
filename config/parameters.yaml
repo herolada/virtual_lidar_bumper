@@ -12,5 +12,8 @@ virtual_lidar_bumper:
     min_z: 0.3
     max_z: 1.0
 
-    # minimum number of points required inside the box to trigger the bumper
+    # number of most recent lidar scans averaged to smooth the point count
+    window_size: 5
+
+    # minimum moving-average number of points inside the box (over window_size scans) required to trigger the bumper
     min_points: 100
