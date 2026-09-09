@@ -2,6 +2,8 @@
 
 #include "sensor_msgs/msg/point_cloud2.hpp"
 #include "std_msgs/msg/bool.hpp"
+#include "visualization_msgs/msg/marker.hpp"
+#include "visualization_msgs/msg/marker_array.hpp"
 
 #include "pcl/point_types.h"
 #include "pcl_conversions/pcl_conversions.h"
@@ -36,6 +38,8 @@ public:
         tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*buffer_);
 
         publisher_ = this->create_publisher<std_msgs::msg::Bool>("bumper_triggered", 10);
+        box_marker_publisher_ = this->create_publisher<visualization_msgs::msg::MarkerArray>(
+            "/virtual_bumper/box", 10);
 
         subscription_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
             "input_pointcloud", rclcpp::SensorDataQoS(),
@@ -53,6 +57,7 @@ private:
 
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr subscription_;
     rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr publisher_;
+    rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr box_marker_publisher_;
 
     void pointCloudCallback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr &msg) {
         pcl::PointCloud<PointType> input_cloud;
@@ -90,9 +95,69 @@ private:
         std::vector<int> indices;
         crop_box.filter(indices);
 
+        bool triggered = static_cast<int>(indices.size()) >= min_points_;
+
         std_msgs::msg::Bool bumper_msg;
-        bumper_msg.data = static_cast<int>(indices.size()) >= min_points_;
+        bumper_msg.data = triggered;
         publisher_->publish(bumper_msg);
+
+        publishBoxMarker(msg->header.stamp, indices.size(), triggered);
+    }
+
+    void publishBoxMarker(const rclcpp::Time &stamp, size_t num_points, bool triggered) {
+        double center_x = (min_x_ + max_x_) / 2.0;
+        double center_y = (min_y_ + max_y_) / 2.0;
+        double center_z = (min_z_ + max_z_) / 2.0;
+
+        visualization_msgs::msg::Marker box_marker;
+        box_marker.header.frame_id = robot_frame_;
+        box_marker.header.stamp = stamp;
+        box_marker.ns = "virtual_bumper";
+        box_marker.id = 0;
+        box_marker.type = visualization_msgs::msg::Marker::CUBE;
+        box_marker.action = visualization_msgs::msg::Marker::ADD;
+        box_marker.pose.position.x = center_x;
+        box_marker.pose.position.y = center_y;
+        box_marker.pose.position.z = center_z;
+        box_marker.pose.orientation.w = 1.0;
+        box_marker.scale.x = std::max(max_x_ - min_x_, 1e-3);
+        box_marker.scale.y = std::max(max_y_ - min_y_, 1e-3);
+        box_marker.scale.z = std::max(max_z_ - min_z_, 1e-3);
+        box_marker.color.a = 0.3;
+        if (triggered) {
+            box_marker.color.r = 1.0;
+            box_marker.color.g = 0.0;
+            box_marker.color.b = 0.0;
+        } else {
+            box_marker.color.r = 0.0;
+            box_marker.color.g = 1.0;
+            box_marker.color.b = 0.0;
+        }
+        box_marker.lifetime = rclcpp::Duration::from_seconds(0.5);
+
+        visualization_msgs::msg::Marker text_marker;
+        text_marker.header.frame_id = robot_frame_;
+        text_marker.header.stamp = stamp;
+        text_marker.ns = "virtual_bumper";
+        text_marker.id = 1;
+        text_marker.type = visualization_msgs::msg::Marker::TEXT_VIEW_FACING;
+        text_marker.action = visualization_msgs::msg::Marker::ADD;
+        text_marker.pose.position.x = center_x;
+        text_marker.pose.position.y = center_y;
+        text_marker.pose.position.z = max_z_ + 0.1;
+        text_marker.pose.orientation.w = 1.0;
+        text_marker.scale.z = 0.2;
+        text_marker.color.a = 1.0;
+        text_marker.color.r = 1.0;
+        text_marker.color.g = 1.0;
+        text_marker.color.b = 1.0;
+        text_marker.text = std::to_string(num_points) + " pts";
+        text_marker.lifetime = rclcpp::Duration::from_seconds(0.5);
+
+        visualization_msgs::msg::MarkerArray marker_array;
+        marker_array.markers.push_back(box_marker);
+        marker_array.markers.push_back(text_marker);
+        box_marker_publisher_->publish(marker_array);
     }
 };
 
