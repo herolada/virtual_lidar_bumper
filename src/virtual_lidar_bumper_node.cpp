@@ -21,6 +21,7 @@
 #include <numeric>
 #include <vector>
 
+using namespace std::chrono_literals;
 using PointType = pcl::PointXYZ;
 
 class VirtualLidarBumperNode : public rclcpp::Node {
@@ -42,10 +43,22 @@ public:
             window_size_ = 1;
         }
 
+        double max_cloud_absence_duration_param = this->declare_parameter<double>("max_cloud_absence_duration", 1.0);
+        if (max_cloud_absence_duration_param <= 0.0) {
+            RCLCPP_WARN(this->get_logger(), "max_cloud_absence_duration is set too low. unacceptable! setting it to a reasonable 1.0.");
+            max_cloud_absence_duration_param = 1.0;
+        }
+        max_cloud_absence_duration_ = rclcpp::Duration::from_seconds(max_cloud_absence_duration_param);
+
+        last_pcl_time_ = this->now();
+        pcl_coming_in_timer_ = this->create_timer(100ms,
+            std::bind(&VirtualLidarBumperNode::pclTimerCallback, this));
+
         buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
         tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*buffer_);
 
         publisher_ = this->create_publisher<std_msgs::msg::Bool>("bumper_triggered", 10);
+        estop_publisher_ = this->create_publisher<std_msgs::msg::Bool>("swstop", 10);
         box_marker_publisher_ = this->create_publisher<visualization_msgs::msg::MarkerArray>(
             "/virtual_bumper/box", 10);
 
@@ -61,13 +74,25 @@ private:
     int min_points_;
     int window_size_;
     std::deque<int> point_count_history_;
+    rclcpp::Duration max_cloud_absence_duration_{1, 0};
+    rclcpp::Time last_pcl_time_;
+    rclcpp::TimerBase::SharedPtr pcl_coming_in_timer_;
 
     std::unique_ptr<tf2_ros::Buffer> buffer_;
     std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
 
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr subscription_;
     rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr publisher_;
+    rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr estop_publisher_;
     rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr box_marker_publisher_;
+
+    void pclTimerCallback() {
+        if ((this->now() - last_pcl_time_) > max_cloud_absence_duration_) {
+            std_msgs::msg::Bool estop_msg;
+            estop_msg.data = true;
+            estop_publisher_->publish(estop_msg);
+        }
+    }
 
     void pointCloudCallback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr &msg) {
         pcl::PointCloud<PointType> input_cloud;
@@ -96,6 +121,9 @@ private:
             pcl::transformPointCloud(input_cloud, transformed_cloud, transform_eigen);
             cloud_in_robot_frame = std::make_shared<pcl::PointCloud<PointType>>(transformed_cloud);
         }
+
+        rclcpp::Time current_pcl_time(this->now());
+        last_pcl_time_ = current_pcl_time;
 
         pcl::CropBox<PointType> crop_box;
         crop_box.setInputCloud(cloud_in_robot_frame);

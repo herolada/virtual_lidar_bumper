@@ -4,6 +4,9 @@ virtual_lidar_bumper:
     robot_frame: "base_link"
     transform_tolerance: 0.1
 
+    # if a point cloud does not come in this many seconds we start sending estop
+    max_cloud_absence_duration: 1.0
+
     # box bounds, in meters, in robot_frame
     min_x: 0.0
     max_x: 1.0
